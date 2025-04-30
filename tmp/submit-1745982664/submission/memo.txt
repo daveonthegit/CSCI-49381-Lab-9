@@ -1,0 +1,98 @@
+To: William H. Flathead III  
+From: Security Administrator  
+Subject: Analysis and Exploit of Buffer Overflow in FrobozzCo Webserver (fhttpd)  
+Date: April 29, 2025  
+
+Dear William,
+
+Following up on your request, I conducted a security audit of our internally-developed FrobozzCo webserver, `fhttpd`, as part of the investigation into the recent server compromise. During this process, I discovered a critical buffer overflow vulnerability in the source code, confirmed the ability to exploit it via crafted HTTP requests, and have developed a working proof-of-concept exploit, a patch, and a remediation plan.
+
+---
+
+### Summary of Vulnerability
+
+The vulnerability lies in the function `send_response()` within `webserver.c`. The server attempts to append the string `"index.html"` to the request URI path via `strcat(path, "index.html")`. However, the `path` variable directly references the `req->uri` field, which was dynamically allocated using only enough space for the original request path. When a URI ending in `/` is received, the code attempts to append `"index.html"` to a buffer that cannot safely contain it, resulting in a classic stack-based buffer overflow.
+
+No bounds checking is performed prior to the `strcat()` call, and since the input is entirely user-controlled, this allows for exploitation through a simple HTTP request — for instance:
+
+GET /[long string of A’s]/ HTTP/1.0
+
+
+This alone is sufficient to cause memory corruption and crash the server.
+
+---
+
+### Exploitation and Demonstration
+
+To demonstrate the impact of the vulnerability, I created a request with an excessively long URI and sent it to the server using both `telnet` and `netcat`. The server crashed consistently, validating the presence of an overflow condition. The payload was then embedded into a script (`exploit.sh`) that can be executed with a port number to automate the attack. This script pulls its attack string from a file (`payload`) and transmits it to the server.
+
+This kind of vulnerability is not limited to crashing the application — with relatively minor changes, the overflow could be weaponized to gain control of the instruction pointer. Given that fhttpd runs with root privileges, an attacker could potentially use this to gain root shell access, install backdoors, or exfiltrate sensitive data.
+
+---
+
+### Fix and Mitigation
+
+The problem was addressed by replacing the unsafe `strcat()` operation with a secure, dynamically-allocated alternative. When a URI ends in `/`, the server now allocates a new buffer large enough to hold both the original path and `"index.html"`, copies the contents safely, and uses the new buffer as the final path. This fix eliminates the potential for buffer overflow.
+
+The patch has been generated using `diff -Naur` and is available in `/root/submission/webserver.patch`. This patch applies cleanly to the original source file (`webserver.orig.c`).
+
+I also recommend the following compilation hardening measures:
+- Enable stack protection using `-fstack-protector-all`
+- Remove `-z execstack` from the `Makefile`
+- Enable RELRO and PIE with flags like `-Wl,-z,relro -Wl,-z,now` and `-fPIE -pie`
+
+---
+
+### Severity Assessment
+
+This vulnerability represents a **high-severity issue**. The fact that the webserver runs as root, processes unauthenticated user input, and performs unsafe string operations without bounds checking creates a perfect storm. While my current proof-of-concept demonstrates only a crash, the overflow opens the door to full remote code execution. Given the age of the fhttpd codebase and the lack of modern mitigations, the system should be treated as compromised until proven otherwise.
+
+---
+
+### Recovery Plan
+
+1. **Immediate remediation:**
+   - Replace the vulnerable binary with the patched version.
+   - Recompile fhttpd with secure compilation flags.
+   - Remove world-writable or temporary files created during testing.
+
+2. **System audit:**
+   - Analyze logs for unusual activity or outbound connections.
+   - Check for unauthorized file changes, new binaries, or user accounts.
+   - Use tools like `chkrootkit` or `rkhunter` to scan for rootkits.
+
+3. **Credential hygiene:**
+   - Rotate all passwords, SSH keys, and API tokens used on this host.
+
+4. **Optional but recommended:**
+   - Rebuild the server from a clean base image to eliminate latent compromise.
+   - Move toward running the webserver under an unprivileged user account using chroot or containers.
+
+---
+
+### Other Observations and Thoughts
+
+- **Codebase design:** The use of raw C functions like `strcat`, `strcpy`, and dynamic memory without length validation is extremely risky in modern security environments. The code lacks robust error handling and assumes benign input in multiple places.
+
+- **Architecture risks:** fhttpd forks a new thread for every connection but doesn’t perform resource cleanup robustly (e.g., no bounds-checking on memory allocations or thread joining). In a production scenario, this could lead to memory leaks or exhaustion under load or attack.
+
+- **Protocol handling:** HTTP parsing is custom-built, brittle, and fails gracefully in some but not all edge cases. Some malformed requests don’t produce useful status codes or logs, making intrusion detection harder.
+
+- **Cultural insight:** The FrobozzCo tradition of in-house development has nostalgic value but, as this incident shows, comes with significant security costs. It may be time to consider hybridizing our infrastructure — retaining critical in-house logic while relying on audited, open-source servers (e.g., Nginx or Apache) for front-end handling.
+
+---
+
+### Conclusion
+
+The buffer overflow in `fhttpd` represents a significant security flaw that must be addressed immediately. I’ve provided a working demonstration of the issue, a fix, and documentation to support recovery and long-term mitigation. Moving forward, I recommend we reevaluate our use of homegrown software in sensitive roles, and adopt secure development practices across all internally maintained tools.
+
+All required files — `exploit.sh`, `payload`, `webserver.patch`, and this memo — are located in `/root/submission`.
+
+Please let me know if you’d like a walkthrough of the exploit, the patching process, or help implementing the recovery plan.
+
+Respectfully,  
+Lab 9 Group 9  
+Security Administrator  
+FrobozzCo
+
+

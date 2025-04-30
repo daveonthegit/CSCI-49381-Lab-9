@@ -1,0 +1,18 @@
+--- webserver.orig.c	2025-04-30 02:36:36.613679264 +0000
++++ webserver.c	2025-04-30 03:03:42.823626289 +0000
+@@ -229,7 +229,14 @@
+ 			path = "index.html";
+ 		} else if (path[strlen(path) - 1] == '/') {
+ 			//concatenating index.html for a /-terminated URL!
+-			strcat(path, "index.html");    
++			char *new_path = malloc(strlen(path) + strlen("index.html") + 1);
++			if(!new_path) {
++				perror("malloc");
++				exit(1);
++			}
++			strcpy(new_path, path);
++			strcat(new_path, "index.html");
++			path = new_path;
+ 		}
+ 	} else {
+ 		statcode = 400;
